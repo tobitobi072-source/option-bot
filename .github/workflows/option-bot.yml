@@ -1,0 +1,40 @@
+name: Option bot
+on:
+  schedule:
+    - cron: "20 13 * * 1-5"   # 8:20am Central in summer time (the bot exits if it's too early)
+    - cron: "20 14 * * 1-5"   # 8:20am Central in winter time
+    - cron: "0 16 * * 1-5"    # backup start, in case an earlier start was missed or crashed
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  issues: write      # lets the bot post your 'account doubled' alerts
+concurrency:
+  group: option-bot
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -q -r requirements.txt
+      - name: Watch the market and trade (8:30am-2:05pm Central)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          LIVE_CONFIRM: ${{ secrets.LIVE_CONFIRM }}
+          TRADING_MODE: ${{ vars.TRADING_MODE }}
+          START_EQUITY: ${{ vars.START_EQUITY }}
+          START_DATE: ${{ vars.START_DATE }}
+          KILL_LEVEL: ${{ vars.KILL_LEVEL }}
+          MAX_BET: ${{ vars.MAX_BET }}
+          MAX_TRADES: ${{ vars.MAX_TRADES }}
+          DAILY_LOSS_STOP: ${{ vars.DAILY_LOSS_STOP }}
+          EXPIRY: ${{ vars.EXPIRY }}
+          STRIKE_OFFSET: ${{ vars.STRIKE_OFFSET }}
+        run: python option_bot.py
