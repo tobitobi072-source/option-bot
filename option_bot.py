@@ -373,12 +373,26 @@ class Bot:
         for sym in held:
             self.trading.close_position(sym)
 
+    def connection_check(self):
+        """Proves the keys work: reads the account and today's market hours without trading."""
+        try:
+            acct = self.trading.get_account()
+            clock = self.trading.get_clock()
+            eq = float(acct.equity)
+            self.log(f"Connection check OK: Alpaca {'LIVE' if self.live else 'paper'} account reached, "
+                     f"{eq / self.start_eq * 100 - 100:+.0f}% vs start, options level {acct.options_trading_level}. "
+                     f"Next market open: {clock.next_open.astimezone(CT):%a %b %d %I:%M %p} Central.")
+        except Exception as e:
+            self.log(f"CONNECTION CHECK FAILED: {e}. Check the two Alpaca key secrets in GitHub.")
+            raise SystemExit(1)
+
     # ---- the day
     def run_day(self):
         now = datetime.now(CT)
         self.log(f"Option bot starting ({'LIVE' if self.live else 'paper'}).")
         if now.time() < dtime(8, 0) or now.time() >= T_STOP:
-            self.log("Outside today's window (8:00am-2:05pm Central). Nothing to do.")
+            self.log("Outside today's window (8:00am-2:05pm Central). Nothing to trade right now.")
+            self.connection_check()
             return
         clock = self.trading.get_clock()
         if not clock.is_open and clock.next_open.astimezone(CT).date() != now.date():
