@@ -1,9 +1,9 @@
 name: Option bot
 on:
   schedule:
-    - cron: "20 13 * * 1-5"   # 8:20am Central in summer time (the bot exits if it's too early)
-    - cron: "20 14 * * 1-5"   # 8:20am Central in winter time
-    - cron: "0 16 * * 1-5"    # backup start, in case an earlier start was missed or crashed
+    # A start attempt every 10 minutes, 8:00am-1:50pm Central (GitHub sometimes skips scheduled runs).
+    # Only one copy ever runs; extra attempts wait, then exit. Outside trading hours the bot just exits.
+    - cron: "*/10 13-18 * * 1-5"
   workflow_dispatch: {}
 permissions:
   contents: read
