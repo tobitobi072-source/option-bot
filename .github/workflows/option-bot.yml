@@ -39,6 +39,7 @@ jobs:
           DAILY_LOSS_STOP: ${{ vars.DAILY_LOSS_STOP }}
           EXPIRY: ${{ vars.EXPIRY }}
           STRIKE_OFFSET: ${{ vars.STRIKE_OFFSET }}
+          MIN_PRICE: ${{ vars.MIN_PRICE }}
         run: python option_bot.py
       - name: Pause before restarting after an error
         if: failure()
