@@ -34,6 +34,7 @@ STOP = 0.50                  # cut the trade if it loses 50%
 MAX_TRADES = 5               # most trades in one day
 DAILY_LOSS_STOP = 2          # stop for the day after this many losing trades
 MAX_BET = 0.50               # most of the account in one trade
+MIN_PRICE = 0.30             # skip options cheaper than this (Lab 7c: cheaper ones lose more to the buy/sell gap)
 START_EQUITY = 100.0
 KILL_LEVEL = 50.0            # stop for good below this (USD)
 LOCK_PCT = 0.40              # stop for good below 40% of the account's best level
@@ -147,6 +148,7 @@ class Bot:
         self.loss_stop = env("DAILY_LOSS_STOP", DAILY_LOSS_STOP, int)
         self.expiry = os.getenv("EXPIRY") or EXPIRY
         self.offset = env("STRIKE_OFFSET", STRIKE_OFFSET, int)
+        self.min_price = env("MIN_PRICE", MIN_PRICE)
         self.trading = TradingClient(key, secret, paper=not self.live)
         self.stocks = StockHistoricalDataClient(key, secret)
         self.options = OptionHistoricalDataClient(key, secret)
@@ -329,6 +331,9 @@ class Bot:
         _, ask = self.quote(occ)
         if ask <= 0.02:
             self.log(f"{occ}: no usable price; skipped.")
+            return
+        if round(ask, 2) < self.min_price:
+            self.log(f"{occ} costs only {ask:.2f}, under the {self.min_price:.2f} minimum. Skipped.")
             return
         limit = round(ask * 1.03 + 0.01, 2)
         cash = float(acct.options_buying_power or acct.cash)
