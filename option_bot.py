@@ -386,6 +386,17 @@ class Bot:
             self.log(f"CONNECTION CHECK FAILED: {e}. Check the two Alpaca key secrets in GitHub.")
             raise SystemExit(1)
 
+    def adjust_for_early_close(self, clock):
+        """Half-day sessions (e.g. day after Thanksgiving) close at noon Central: exit everything before that."""
+        global T_LAST, T_EXIT, T_STOP
+        close = clock.next_close.astimezone(CT)
+        if close.date() == datetime.now(CT).date() and close.time() < dtime(15, 0):
+            c = datetime.combine(close.date(), close.time())
+            T_EXIT = (c - timedelta(minutes=7)).time()
+            T_LAST = (c - timedelta(minutes=20)).time()
+            T_STOP = (c - timedelta(minutes=5)).time()
+            self.log(f"Early close today at {close:%I:%M %p}: last entry {T_LAST:%I:%M}, everything sold by {T_EXIT:%I:%M}.")
+
     # ---- the day
     def run_day(self):
         now = datetime.now(CT)
@@ -398,6 +409,7 @@ class Bot:
         if not clock.is_open and clock.next_open.astimezone(CT).date() != now.date():
             self.log("Market closed today.")
             return
+        self.adjust_for_early_close(clock)
         self.load_daily(now.date())
         while datetime.now(CT).time() < T_STOP:
             if datetime.now(CT).time() >= OPEN:
@@ -417,5 +429,38 @@ class Bot:
                 open(path, "a").write("## Option bot day log\n```\n" + "\n".join(self.log_lines) + "\n```\n")
 
 
+# --------------------------------------------------------- always on ---
+T_READY = dtime(8, 25)          # a trading run starts here, just before the 8:30 open
+MAX_WAIT = 5.5 * 3600           # GitHub stops any run after 6 hours, so waiting runs hand over before that
+
+
+def main():
+    """Every run either trades today's session or waits and then hands over to a fresh run.
+    The workflow starts the next run when this one ends, so the bot never depends on GitHub's timer."""
+    bot = Bot()
+    now = datetime.now(CT)
+    clock = bot.trading.get_clock()
+    session_today = clock.is_open or clock.next_open.astimezone(CT).date() == now.date()
+    if session_today and dtime(8, 0) <= now.time() < T_STOP:
+        bot.run_day()
+        return
+    nxt = clock.next_open.astimezone(CT)
+    target = datetime.combine(nxt.date(), T_READY, CT)
+    wait = (target - now).total_seconds()
+    bot.log(f"Option bot on standby ({'LIVE' if bot.live else 'paper'}). Next session: {nxt:%a %b %d}, "
+            f"trading run starts {target:%I:%M %p} Central.")
+    bot.connection_check()
+    if wait > 10 * 60:
+        nap = min(wait - 5 * 60, MAX_WAIT)
+        bot.log(f"Waiting {nap / 3600:.1f} hours, then handing over to a fresh run.")
+        time.sleep(nap)
+        return
+    time.sleep(max(wait, 0))
+    bot.run_day()
+
+
 if __name__ == "__main__":
-    Bot().run_day()
+    if os.getenv("CHECK_ONLY"):
+        Bot().connection_check()
+    else:
+        main()
