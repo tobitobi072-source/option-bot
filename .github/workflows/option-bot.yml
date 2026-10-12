@@ -1,20 +1,22 @@
 name: Option bot
 on:
   schedule:
-    # A start attempt every 10 minutes, 8:00am-1:50pm Central (GitHub sometimes skips scheduled runs).
-    # Only one copy ever runs; extra attempts wait, then exit. Outside trading hours the bot just exits.
-    - cron: "*/10 13-18 * * 1-5"
+    # Backup starts only. The bot keeps itself running: each run starts the next one when it ends.
+    - cron: "15 13 * * 1-5"
+    - cron: "15 14 * * 1-5"
+    - cron: "45 15 * * 1-5"
   workflow_dispatch: {}
 permissions:
   contents: read
   issues: write      # lets the bot post your 'account doubled' alerts
+  actions: write     # lets each run start the next one (always on)
 concurrency:
   group: option-bot
   cancel-in-progress: false
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 355
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,3 +40,11 @@ jobs:
           EXPIRY: ${{ vars.EXPIRY }}
           STRIKE_OFFSET: ${{ vars.STRIKE_OFFSET }}
         run: python option_bot.py
+      - name: Pause before restarting after an error
+        if: failure()
+        run: sleep 300
+      - name: Start the next run (keeps the bot always on)
+        if: success() || failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run option-bot.yml --repo "${{ github.repository }}" --ref main
