@@ -126,7 +126,8 @@ def github_api(method, path, body=None):
 
 
 def milestone_title(m):
-    return f"Account doubled: {2 ** m}x your start"
+    name = os.getenv("BOT_NAME")
+    return f"{name + ': ' if name else ''}Account doubled: {2 ** m}x your start"
 
 
 # ------------------------------------------------------------------ bot ---
