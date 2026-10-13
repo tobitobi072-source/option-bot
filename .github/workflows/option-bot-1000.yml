@@ -1,0 +1,51 @@
+name: Option bot 1000
+on:
+  schedule:
+    # Same bot on the $1,000 paper account. Backup starts only. The bot keeps itself running: each run starts the next one when it ends.
+    - cron: "15 13 * * 1-5"
+    - cron: "15 14 * * 1-5"
+    - cron: "45 15 * * 1-5"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  issues: write      # lets the bot post your 'account doubled' alerts
+  actions: write     # lets each run start the next one (always on)
+concurrency:
+  group: option-bot-1000
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -q -r requirements.txt
+      - name: Watch the market and trade (8:30am-2:05pm Central)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY_1000 }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY_1000 }}
+          TRADING_MODE: "paper"       # always paper: this copy is only for comparison
+          START_EQUITY: "1000"
+          BOT_NAME: "$1000 bot"
+          START_DATE: "2026-10-12"
+          KILL_LEVEL: "500"
+          MAX_BET: ${{ vars.MAX_BET }}
+          MAX_TRADES: ${{ vars.MAX_TRADES }}
+          DAILY_LOSS_STOP: ${{ vars.DAILY_LOSS_STOP }}
+          EXPIRY: ${{ vars.EXPIRY }}
+          STRIKE_OFFSET: ${{ vars.STRIKE_OFFSET }}
+          MIN_PRICE: ${{ vars.MIN_PRICE }}
+        run: python option_bot.py
+      - name: Pause before restarting after an error
+        if: failure()
+        run: sleep 300
+      - name: Start the next run (keeps the bot always on)
+        if: success() || failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run option-bot-1000.yml --repo "${{ github.repository }}" --ref main
