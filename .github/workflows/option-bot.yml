@@ -2,9 +2,8 @@ name: Option bot
 on:
   schedule:
     # Backup starts only. The bot keeps itself running: each run starts the next one when it ends.
-    - cron: "15 13 * * 1-5"
-    - cron: "15 14 * * 1-5"
-    - cron: "45 15 * * 1-5"
+    # Backup starts every 15 minutes, 12:07-15:52 UTC (about 7-10:45am Central), in case GitHub stops a run or delays a start.
+    - cron: "7,22,37,52 12-15 * * 1-5"
   workflow_dispatch: {}
 permissions:
   contents: read
