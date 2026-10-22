@@ -1,0 +1,52 @@
+name: Spread bot
+on:
+  schedule:
+    # Backup starts every 15 minutes, 12:07-15:52 UTC (about 7-10:45am Central), in case GitHub stops a run or delays a start.
+    - cron: "7,22,37,52 12-15 * * 1-5"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  issues: write      # guardrail-stop and alert issues
+  actions: write     # lets each run start the next one (always on)
+concurrency:
+  group: spread-bot
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      HAS_KEYS: ${{ secrets.ALPACA_API_KEY_SPREAD != '' && secrets.ALPACA_SECRET_KEY_SPREAD != '' }}
+    steps:
+      - name: Waiting for keys
+        if: env.HAS_KEYS != 'true'
+        run: echo "Add the ALPACA_API_KEY_SPREAD and ALPACA_SECRET_KEY_SPREAD secrets to switch the spread bot on."
+      - uses: actions/checkout@v4
+        if: env.HAS_KEYS == 'true'
+      - uses: actions/setup-python@v5
+        if: env.HAS_KEYS == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -q -r requirements.txt
+        if: env.HAS_KEYS == 'true'
+      - name: Sell late-day spreads (1:30pm Central, expire 3pm)
+        if: env.HAS_KEYS == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY_SPREAD }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY_SPREAD }}
+          TRADING_MODE: "paper"       # paper only until you deliberately change this
+          START_EQUITY: "1000"
+          BOT_NAME: "Spread bot"
+          RISK: "0.20"
+          KILL_PCT: "0.50"
+        run: python spread_bot.py
+      - name: Pause before restarting after an error
+        if: failure() && env.HAS_KEYS == 'true'
+        run: sleep 300
+      - name: Start the next run (keeps the bot always on)
+        if: (success() || failure()) && env.HAS_KEYS == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run spread-bot.yml --repo "${{ github.repository }}" --ref main
