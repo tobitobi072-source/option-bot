@@ -12,6 +12,10 @@ Size: RISK of the account per trade (the most a spread can lose). A small accoun
 risks no more than MIN_ONE_MAX of the account. Guardrail: stop for good below KILL_PCT of the start; the stop is
 remembered as a GitHub issue and the bot stays out until you close that issue.
 Paper trading unless you deliberately switch to live.
+
+XSP mode (SYMBOLS="XSP,QQQ" or "XSP"): XSP is the mini S&P 500 INDEX option. It settles in CASH, so its spreads
+are simply held to 3pm (no 2:25pm buy-back, no shares can ever be assigned). The direction still comes from SPY;
+the XSP index level is worked out from XSP option prices (call - put + strike), since Alpaca has no index data.
 """
 import json
 import os
@@ -25,7 +29,9 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 # ------------------------------------------------------------- YOUR RULES --
-SYMBOLS = ["SPY", "QQQ"]
+SYMBOLS = ["SPY", "QQQ"]        # override with the SYMBOLS setting, e.g. "XSP,QQQ"
+SIGNAL_SOURCE = {"XSP": "SPY"}  # index options read their direction from this fund
+CASH_SETTLED = {"XSP"}          # held to expiry, never bought back
 ENTRY = dtime(13, 30)          # sell time (Central)
 ENTRY_LAST = dtime(13, 45)     # give up on unfilled orders after this
 SAFETY = dtime(14, 25)         # buy back any spread whose sold strike is in the money
@@ -121,6 +127,7 @@ class Bot:
         self.min_move = env("MIN_MOVE", MIN_MOVE)
         self.offset = env("OFFSET", OFFSET, int)
         self.width = env("WIDTH", WIDTH, int)
+        self.symbols = [x.strip().upper() for x in (os.getenv("SYMBOLS") or ",".join(SYMBOLS)).split(",") if x.strip()]
         self.trading = TradingClient(key, secret, paper=not self.live)
         self.stocks = StockHistoricalDataClient(key, secret)
         self.options = OptionHistoricalDataClient(key, secret)
@@ -186,17 +193,29 @@ class Bot:
             return None
         return float(q.bid_price or 0), float(q.ask_price or 0)
 
+    def index_level(self, sym, today, guess):
+        """Index level from same-day option prices: S = strike + call - put (median of strikes near the guess)."""
+        k0, est = round(guess), []
+        for k in range(k0 - 2, k0 + 3):
+            c, p = self.quote(occ(sym, today, "C", k)), self.quote(occ(sym, today, "P", k))
+            if c and p and c[1] > 0 and p[1] > 0:
+                est.append(k + (c[0] + c[1]) / 2 - (p[0] + p[1]) / 2)
+        if len(est) < 2:
+            return None
+        return float(np.median(est))
+
     # ---------------------------------------------------------------- steps
     def read_first30(self, today):
-        for sym in SYMBOLS:
+        for sym in self.symbols:
             if sym in self.first30:
                 continue
-            g = self.bars(sym, datetime.combine(today, OPEN, CT), datetime.combine(today, T30, CT) + timedelta(minutes=1))
+            src = SIGNAL_SOURCE.get(sym, sym)
+            g = self.bars(src, datetime.combine(today, OPEN, CT), datetime.combine(today, T30, CT) + timedelta(minutes=1))
             g = g[(g.index.time >= OPEN) & (g.index.time < T30)] if len(g) else g
             if len(g) >= 5 and g.index[0].time() == OPEN:
                 o, c = float(g["open"].iloc[0]), float(g["close"].iloc[-1])
                 self.first30[sym] = (o, c)
-                self.log(f"{sym} first 30 minutes: {c / o * 100 - 100:+.2f}% "
+                self.log(f"{sym}{f' (from {src})' if src != sym else ''} first 30 minutes: {c / o * 100 - 100:+.2f}% "
                          f"({'up' if c > o else 'down' if c < o else 'flat'}).")
 
     def try_enter(self, sym, today, equity):
@@ -207,13 +226,22 @@ class Bot:
             self.done.add(sym)
             return
         o, p930 = self.first30[sym]
-        S = self.price_now(sym)
+        src = SIGNAL_SOURCE.get(sym, sym)
+        S = self.price_now(src)
         d = signal(o, p930, S, self.min_move)
         self.done.add(sym)
         if d == 0:
             self.log(f"{sym}: no clear direction at 1:30pm (first 30 min {p930 / o * 100 - 100:+.2f}%, "
                      f"day {S / o * 100 - 100:+.2f}%). No trade.")
             return
+        move = S / o - 1
+        if sym != src:
+            level = self.index_level(sym, today, S)
+            if level is None or abs(level / S - 1) > 0.03:
+                self.log(f"{sym}: couldn't work out the index level from option prices ({level}). Skipped.")
+                return
+            self.log(f"{sym} index level about {level:.2f} ({src} {S:.2f}).")
+            S = level
         cp, ks, kl = plan_spread(S, d, self.offset, self.width)
         s_occ, l_occ = occ(sym, today, cp, ks), occ(sym, today, cp, kl)
         qs, ql = self.quote(s_occ), self.quote(l_occ)
@@ -235,9 +263,10 @@ class Bot:
                                                             limit_price=-credit, time_in_force=TimeInForce.DAY))
         info = dict(sym=sym, cp=cp, ks=ks, kl=kl, s_occ=s_occ, l_occ=l_occ, qty=n, credit=credit)
         self.pending[sym] = dict(order_id=order.id, tries=1, placed=time.time(), info=info)
-        self.log(f"SIGNAL {sym} {'UP' if d > 0 else 'DOWN'} day ({S / o * 100 - 100:+.2f}%): SELL {n} x {sym} {side} spread "
+        self.log(f"SIGNAL {sym} {'UP' if d > 0 else 'DOWN'} day ({move * 100:+.2f}%): SELL {n} x {sym} {side} spread "
                  f"{ks}/{kl} for about {credit:.2f} ({n * credit * 100:,.0f} USD in, can lose up to "
-                 f"{n * max_loss * 100:,.0f} USD). Expires 3pm today.")
+                 f"{n * max_loss * 100:,.0f} USD). Expires 3pm today"
+                 f"{' (cash-settled, held to the end)' if sym in CASH_SETTLED else ''}.")
 
     def manage_pending(self):
         from alpaca.trading.requests import LimitOrderRequest
@@ -298,6 +327,9 @@ class Bot:
         from alpaca.trading.enums import OrderClass, TimeInForce
         self.safety_done = True
         for sym, sp in list(self.spreads.items()):
+            if sym in CASH_SETTLED:
+                self.log(f"Safety check {sym}: cash-settled index option, holding to 3pm (no shares possible).")
+                continue
             S = self.price_now(sym)
             in_money = S < sp["ks"] if sp["cp"] == "P" else S > sp["ks"]
             if not in_money:
@@ -316,7 +348,7 @@ class Bot:
     def run_day(self):
         now = datetime.now(CT)
         today = now.date()
-        self.log(f"{self.name} starting ({'LIVE' if self.live else 'paper'}).")
+        self.log(f"{self.name} starting ({'LIVE' if self.live else 'paper'}), trading {', '.join(self.symbols)}.")
         clock = self.trading.get_clock()
         if not clock.is_open and clock.next_open.astimezone(CT).date() != today:
             self.log("Market closed today.")
@@ -337,13 +369,13 @@ class Bot:
         while datetime.now(CT).time() < T_STOP:
             t = datetime.now(CT).time()
             try:
-                if t >= T30 and len(self.first30) < len(SYMBOLS) and t < ENTRY:
+                if t >= T30 and len(self.first30) < len(self.symbols) and t < ENTRY:
                     self.read_first30(today)
                 if not stopped and ENTRY <= t < ENTRY_LAST:
-                    if len(self.first30) < len(SYMBOLS):
+                    if len(self.first30) < len(self.symbols):
                         self.read_first30(today)
                     equity = float(self.trading.get_account().equity)
-                    for sym in SYMBOLS:
+                    for sym in self.symbols:
                         if sym not in self.done:
                             self.try_enter(sym, today, equity)
                 if self.pending:
