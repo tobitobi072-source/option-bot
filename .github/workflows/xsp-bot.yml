@@ -1,8 +1,8 @@
 name: XSP bot
 on:
   schedule:
-    # Backup starts every 15 minutes, 12:07-15:52 UTC (about 7-10:45am Central), in case GitHub stops a run or delays a start.
-    - cron: "7,22,37,52 12-15 * * 1-5"
+    # Backup starts every 15 minutes, 12:07-19:52 UTC (morning to early afternoon Central), in case GitHub stops a run or delays a start.
+    - cron: "7,22,37,52 12-19 * * 1-5"
   workflow_dispatch: {}
 permissions:
   contents: read
