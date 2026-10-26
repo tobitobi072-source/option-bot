@@ -200,6 +200,7 @@ class Bot:
             c, p = self.quote(occ(sym, today, "C", k)), self.quote(occ(sym, today, "P", k))
             if c and p and c[1] > 0 and p[1] > 0:
                 est.append(k + (c[0] + c[1]) / 2 - (p[0] + p[1]) / 2)
+                self.log(f"{sym} {k} call {c[0]:.2f}/{c[1]:.2f}, put {p[0]:.2f}/{p[1]:.2f} -> level {est[-1]:.2f}")
         if len(est) < 2:
             return None
         return float(np.median(est))
@@ -249,6 +250,8 @@ class Bot:
             self.log(f"{sym}: no quotes for {s_occ} / {l_occ}. Skipped.")
             return
         credit = round((qs[0] + qs[1]) / 2 - (ql[0] + ql[1]) / 2, 2)
+        self.log(f"{sym} quotes: sold {s_occ} bid {qs[0]:.2f} / ask {qs[1]:.2f}, bought {l_occ} bid {ql[0]:.2f} / "
+                 f"ask {ql[1]:.2f} -> mid credit {credit:.2f}.")
         if credit < MIN_CREDIT:
             self.log(f"{sym}: the spread only pays {credit:.2f}. Skipped.")
             return
