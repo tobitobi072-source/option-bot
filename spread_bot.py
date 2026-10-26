@@ -406,22 +406,28 @@ class Bot:
 
 
 # --------------------------------------------------------- always on ---
-T_READY = dtime(8, 25)
-MAX_WAIT = 5.5 * 3600
+T_READY = dtime(12, 25)        # the trading run starts here; the 8:30-9:00 move is read from history
+T_RUN_FROM = dtime(12, 15)     # a run that starts after this on a trading day trades the day
+MAX_WAIT = 5.5 * 3600          # GitHub stops any run after 6 hours, so waiting runs hand over before that
 
 
 def main():
+    """Every run either trades today's afternoon (12:25-3:05pm, well inside GitHub's 6-hour limit)
+    or waits and then hands over to a fresh run."""
     bot = Bot()
     now = datetime.now(CT)
     clock = bot.trading.get_clock()
     session_today = clock.is_open or clock.next_open.astimezone(CT).date() == now.date()
-    if session_today and dtime(8, 0) <= now.time() < T_STOP:
+    if session_today and T_RUN_FROM <= now.time() < T_STOP:
         bot.run_day()
         return
-    nxt = clock.next_open.astimezone(CT)
-    target = datetime.combine(nxt.date(), T_READY, CT)
+    if session_today and now.time() < T_RUN_FROM:
+        day = now.date()
+    else:
+        day = clock.next_open.astimezone(CT).date()
+    target = datetime.combine(day, T_READY, CT)
     wait = (target - now).total_seconds()
-    bot.log(f"{bot.name} on standby ({'LIVE' if bot.live else 'paper'}). Next session: {nxt:%a %b %d}, "
+    bot.log(f"{bot.name} on standby ({'LIVE' if bot.live else 'paper'}). Next session: {day:%a %b %d}, "
             f"trading run starts {target:%I:%M %p} Central.")
     bot.connection_check()
     if wait > 10 * 60:
